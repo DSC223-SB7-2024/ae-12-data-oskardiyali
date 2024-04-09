@@ -1,0 +1,197 @@
+---
+title: "AE12/HW 08 - Data Splitting and Overfitting"
+author: "Oskar Diyali"
+date: "04/08/2024"
+---
+
+### Load Packages
+
+```{r load_packages}
+library(tidyverse)
+library(tidymodels)
+library(schrute)
+library(lubridate)
+library(kableExtra)
+set.seed(1234)
+```
+
+### Glimpse the data
+
+```{r glimpse-dataset}
+
+glimpse(theoffice)
+
+```
+
+### Fix Air Date
+
+```{r fix-airdate}
+
+theoffice <- theoffice %>%
+  mutate(air_date = ymd(as.character(air_date)))
+
+```
+
+
+### Exercise 1
+
+```{r find-percent}
+
+
+characters <- theoffice |>
+  group_by(episode, season, character) |>
+  summarise(num_lines = n())
+
+tot_lines <- characters |>
+  group_by(episode) |>
+  summarise(tot_lines = sum(num_lines))
+
+characters <- left_join(characters, tot_lines, by = "episode")
+
+characters <- characters |>
+  mutate(percentage = (num_lines / tot_lines) * 100) |>
+  select(episode, season, character, percentage) |>
+  filter(character %in% c("Pam", "Michael", "Dwight", "Jim")) 
+
+characters_wide <- characters |>
+  pivot_wider(names_from = character, values_from = percentage)
+
+characters_wide
+
+
+
+```
+
+
+
+### Exercise 2
+
+```{r episodes}
+
+theoffice <- theoffice |>
+  mutate(text = tolower(text))
+
+halloween_epi <- theoffice |>
+  filter(str_detect(text, "halloween")) |>
+  count(episode_name) |>
+  filter(n > 1) |>
+  mutate(halloween = 1) |>
+  select(-n)
+
+valentine_epi <- theoffice |>
+  filter(str_detect(text, "valentine")) |>
+  count(episode_name) |>
+  filter(n > 1) |>
+  mutate(valentine = 1) |>
+  select(-n)
+
+christmas_epi <- theoffice |>
+  filter(str_detect(text, "christmas")) |>
+  count(episode_name) |>
+  filter(n > 1) |>
+  mutate(christmas = 1) |>
+  select(-n)
+ 
+halloween_epi
+valentine_epi
+christmas_epi
+```
+
+
+#Exercise 3
+
+```{r modify}
+
+office_df <- theoffice %>%
+  select(season, episode, episode_name, imdb_rating, total_votes, air_date) %>%
+  distinct(season, episode, .keep_all = TRUE) %>%
+  left_join(halloween_epi, by = "episode_name") %>% 
+  left_join(valentine_epi, by = "episode_name") %>% 
+  left_join(christmas_epi, by = "episode_name") %>% 
+  replace_na(list(halloween = 0, valentine = 0, christmas = 0)) %>%
+  mutate(michael = if_else(season > 7, 0, 1)) %>%
+  mutate(
+    across(halloween:michael, as.factor)) %>%
+  left_join(characters, by = c("season", "episode"))
+
+office_df
+
+```
+### Exercise 4
+
+```{r splitdata}
+
+
+office_split <- initial_split(office_df)
+office_train <- training(office_split)
+office_test <- testing(office_split)
+
+
+```
+
+
+### Exercise 5
+
+```{r linear reg}
+
+office_mod <- linear_reg() %>%
+  set_engine("lm")
+
+office_mod
+
+```
+
+### Exercise 6
+
+
+```{r create_recipe}
+
+
+my_recipe <- recipe(imdb_rating ~ ., data = office_train) |>
+  update_role(episode_name, new_role = "id") |>
+  step_rm(air_date) |>
+  step_dummy(all_nominal(), -episode_name) |>
+  step_zv(all_predictors())
+
+my_recipe
+
+```
+
+### Exercise 7
+
+```{r workflow-r}
+
+new_workflow <- workflow() |>
+  add_model(office_mod) |>
+  add_recipe(my_recipe)
+
+new_workflow
+```
+
+### Exercise 8
+
+```{r fit}
+office_fit <- new_workflow |>
+  fit(data = office_train)
+
+tidy(office_fit)
+```
+
+### Exercise 9
+
+``` {r make-predictions}
+
+office_test_pred <- predict(office_fit, new_data = office_test) |>
+  bind_cols(office_test |>
+              select(imdb_rating, episode_name))
+
+rmse(office_test_pred, truth = imdb_rating, estimate = .pred)
+```
+
+
+```{r make-predictions2}
+
+rsq(office_test_pred, truth = imdb_rating, estimate = .pred)
+
+```
+
